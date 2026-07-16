@@ -1,81 +1,65 @@
-import logging
+#!/usr/bin/env python3
 import os
+import random
+import logging
+from pathlib import Path
 
 import discord
+from discord.ext import commands
 from dotenv import load_dotenv
 
 load_dotenv()
+# leave while you still can you dont want to be here i promise you wallahi
+TOKEN = os.getenv("DISCORD_TOKEN")
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
-TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-SOURCE_CHANNEL_ID = int(os.environ["SOURCE_CHANNEL_ID"])
-DEST_CHANNEL_ID = int(os.environ["DEST_CHANNEL_ID"])
-REQUIRED_FIELDS = int(os.environ.get("REQUIRED_FIELDS", "5"))
-VALID_FORMAT_REPLY = "Logged"
-INVALID_FORMAT_REPLY = "Error - Format not followed. Log again or dm @russiancatmaid if you believe this is a mistake"
+MESSAGES_DIR = Path(__file__).parent / "messages"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("log-forwarder")
+
+def load_welcome_messages(directory: Path) -> list[str]:
+    files = sorted(directory.glob("*.txt"))
+    messages = [f.read_text(encoding="utf-8").strip() for f in files]
+    if not messages:
+        raise RuntimeError(f"No .txt message files found in {directory}")
+    return messages
+
+
+WELCOME_MESSAGES = load_welcome_messages(MESSAGES_DIR)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("welcome_bot")
 
 intents = discord.Intents.default()
-intents.message_content = True
+intents.members = True  # required for on_member_join; enable "SERVER MEMBERS INTENT" in the dev portal too
 
-client = discord.Client(intents=intents)
-
-
-def validate_format(content: str, required_fields: int) -> bool:
-    """A valid log is exactly `required_fields` non-blank lines, each 'Label: value',
-    where value is present and isn't left as a blank/placeholder '*'."""
-    lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
-    if len(lines) != required_fields:
-        return False
-    for line in lines:
-        if ":" not in line:
-            return False
-        label, _, value = line.partition(":")
-        if not label.strip() or not value.strip() or value.strip() == "*":
-            return False
-    return True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-@client.event
+@bot.event
 async def on_ready():
-    logger.info("Logged in as %s (id=%s)", client.user, client.user.id)
-    if client.get_channel(SOURCE_CHANNEL_ID) is None:
-        logger.warning("Source channel %s not visible to bot - check ID/permissions", SOURCE_CHANNEL_ID)
-    if client.get_channel(DEST_CHANNEL_ID) is None:
-        logger.warning("Destination channel %s not visible to bot - check ID/permissions", DEST_CHANNEL_ID)
+    logger.info("Logged in as %s (id: %s)", bot.user, bot.user.id)
 
 
-@client.event
-async def on_message(message: discord.Message):
-    if message.author.bot or message.channel.id != SOURCE_CHANNEL_ID:
-        return
+@bot.event
+async def on_member_join(member: discord.Member):
+    message = random.choice(WELCOME_MESSAGES)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    if validate_format(message.content, REQUIRED_FIELDS):
-        dest_channel = client.get_channel(DEST_CHANNEL_ID)
-        if dest_channel is None:
-            logger.error("Destination channel %s not found; dropping message %s", DEST_CHANNEL_ID, message.id)
-            return
-        header = f"Logged by **{message.author}** — {message.jump_url}"
-        try:
-            await dest_channel.send(f"{header}\n{message.content}")
-        except discord.HTTPException:
-            logger.exception("Failed to forward message %s", message.id)
-            return
-        try:
-            await message.reply(VALID_FORMAT_REPLY)
-        except discord.HTTPException:
-            logger.exception("Failed to reply to message %s", message.id)
+    try:
+        await member.send(message)
+        status = f"✅ Sent welcome DM to {member.mention} (`{member}`)."
+    except discord.Forbidden:
+        status = f"⚠️ Could not DM {member.mention} (`{member}`) — they have DMs disabled."
+    except discord.HTTPException as e:
+        status = f"❌ Failed to DM {member.mention} (`{member}`): {e}"
+
+    if log_channel:
+        await log_channel.send(status)
     else:
-        try:
-            await message.reply(INVALID_FORMAT_REPLY)
-        except discord.HTTPException:
-            logger.exception("Failed to reply to message %s", message.id)
+        logger.warning("LOG_CHANNEL_ID not set/found; skipping channel log. Status: %s", status)
 
 
 if __name__ == "__main__":
-    client.run(TOKEN, log_handler=None)
-
+    if not TOKEN:
+        raise RuntimeError("DISCORD_TOKEN is not set. Copy .env.example to .env and fill in your bot token.")
+    bot.run(TOKEN)
