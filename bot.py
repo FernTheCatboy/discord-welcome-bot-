@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import random
+import re
 import logging
 from pathlib import Path
 
@@ -15,19 +16,28 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 MESSAGES_DIR = Path(__file__).parent / "messages"
 
+FALLBACK_VARIANT = "0"
+FALLBACK_MESSAGE = "Welcome to the server! We're glad you're here."
 
-def load_welcome_messages(directory: Path) -> list[str]:
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("welcome_bot")
+
+
+def _variant_label(path: Path) -> str:
+    match = re.search(r"\d+", path.stem)
+    return match.group() if match else path.stem
+
+
+def load_welcome_messages(directory: Path) -> list[tuple[str, str]]:
     files = sorted(directory.glob("*.txt"))
-    messages = [f.read_text(encoding="utf-8").strip() for f in files]
+    messages = [(_variant_label(f), f.read_text(encoding="utf-8").strip()) for f in files]
     if not messages:
-        raise RuntimeError(f"No .txt message files found in {directory}")
+        logger.warning("No .txt message files found in %s; falling back to variant %s.", directory, FALLBACK_VARIANT)
+        messages = [(FALLBACK_VARIANT, FALLBACK_MESSAGE)]
     return messages
 
 
 WELCOME_MESSAGES = load_welcome_messages(MESSAGES_DIR)
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("welcome_bot")
 
 intents = discord.Intents.default()
 intents.members = True  # required for on_member_join; enable "SERVER MEMBERS INTENT" in the dev portal too
@@ -42,16 +52,16 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    message = random.choice(WELCOME_MESSAGES)
+    variant, message = random.choice(WELCOME_MESSAGES)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
     try:
         await member.send(message)
-        status = f"✅ Sent welcome DM to {member.mention} (`{member}`)."
+        status = f"✅ Sent welcome DM (variant {variant}) to {member.mention} (`{member}`)."
     except discord.Forbidden:
-        status = f"⚠️ Could not DM {member.mention} (`{member}`) — they have DMs disabled."
+        status = f"⚠️ Could not DM {member.mention} (`{member}`) — they have DMs disabled. (variant {variant})"
     except discord.HTTPException as e:
-        status = f"❌ Failed to DM {member.mention} (`{member}`): {e}"
+        status = f"❌ Failed to DM {member.mention} (`{member}`): {e} (variant {variant})"
 
     if log_channel:
         await log_channel.send(status)
