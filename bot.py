@@ -17,7 +17,7 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 MESSAGES_DIR = Path(__file__).parent / "messages"
 
 FALLBACK_VARIANT = "0"
-FALLBACK_MESSAGE = "Welcome to the server! We're glad you're here."
+FALLBACK_MESSAGE = "The bot has not functioned as expected, please DM @russiancatmaid"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("welcome_bot")
